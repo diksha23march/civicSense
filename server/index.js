@@ -36,6 +36,44 @@ app.get("/api/db-health", async (req, res) => {
   }
 });
 
+app.get("/api/issues", async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT
+        i.id,
+        i.title,
+        i.description,
+        i.category,
+        i.address,
+        i.latitude,
+        i.longitude,
+        i.image_url,
+        i.priority,
+        i.status,
+        i.reported_by,
+        i.created_at,
+        i.updated_at,
+        u.full_name AS reporter_name
+      FROM issues i
+      JOIN users u ON i.reported_by = u.id
+      ORDER BY i.created_at DESC, i.id DESC
+    `);
+
+    return res.status(200).json({
+      success: true,
+      count: result.rows.length,
+      issues: result.rows,
+    });
+  } catch (error) {
+    console.error("Fetching issues failed:", error.message);
+
+    return res.status(500).json({
+      success: false,
+      message: "Unable to retrieve civic issues.",
+    });
+  }
+});
+
 app.post("/api/issues", async (req, res) => {
   const {
     title,
