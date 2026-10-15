@@ -36,6 +36,125 @@ app.get("/api/db-health", async (req, res) => {
   }
 });
 
+app.post("/api/issues", async (req, res) => {
+  const {
+    title,
+    description,
+    category,
+    address,
+    reportedBy,
+    latitude,
+    longitude,
+    imageUrl,
+    priority = "medium",
+  } = req.body;
+
+  const allowedCategories = [
+    "sanitation",
+    "roads",
+    "water_supply",
+    "street_lighting",
+    "drainage",
+    "waste_management",
+    "public_safety",
+    "other",
+  ];
+
+  const allowedPriorities = ["low", "medium", "high", "urgent"];
+
+  // Validate required fields
+  if (
+    typeof title !== "string" ||
+    !title.trim() ||
+    title.trim().length > 200 ||
+    typeof description !== "string" ||
+    !description.trim() ||
+    typeof address !== "string" ||
+    !address.trim() ||
+    !Number.isSafeInteger(Number(reportedBy)) ||
+    Number(reportedBy) <= 0
+  ) {
+    return res.status(400).json({
+      success: false,
+      message:
+        "Valid title, description, address, and reportedBy are required.",
+    });
+  }
+
+  if (!allowedCategories.includes(category)) {
+    return res.status(400).json({
+      success: false,
+      message: "Invalid issue category.",
+    });
+  }
+
+  if (!allowedPriorities.includes(priority)) {
+    return res.status(400).json({
+      success: false,
+      message: "Invalid priority.",
+    });
+  }
+
+  // Validate optional coordinates
+  const validCoordinate = (value, min, max) =>
+    value === undefined ||
+    value === null ||
+    (value !== "" &&
+      Number.isFinite(Number(value)) &&
+      Number(value) >= min &&
+      Number(value) <= max);
+
+  if (
+    !validCoordinate(latitude, -90, 90) ||
+    !validCoordinate(longitude, -180, 180)
+  ) {
+    return res.status(400).json({
+      success: false,
+      message: "Invalid latitude or longitude.",
+    });
+  }
+
+  try {
+    const result = await pool.query(
+      `INSERT INTO issues
+        (title, description, category, address,
+         latitude, longitude, image_url, priority, reported_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       RETURNING *`,
+      [
+        title.trim(),
+        description.trim(),
+        category,
+        address.trim(),
+        latitude ?? null,
+        longitude ?? null,
+        imageUrl ?? null,
+        priority,
+        Number(reportedBy),
+      ]
+    );
+
+    return res.status(201).json({
+      success: true,
+      message: "Civic issue reported successfully.",
+      issue: result.rows[0],
+    });
+  } catch (error) {
+    console.error("Issue creation failed:", error.message);
+
+    if (error.code === "23503") {
+      return res.status(400).json({
+        success: false,
+        message: "The specified reporting user does not exist.",
+      });
+    }
+
+    return res.status(500).json({
+      success: false,
+      message: "Unable to report the issue.",
+    });
+  }
+});
 
 app.listen(PORT, () => {
   console.log(`CivicSense server running at http://localhost:${PORT}`);
