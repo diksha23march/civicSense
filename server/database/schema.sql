@@ -157,3 +157,115 @@ CREATE TABLE IF NOT EXISTS issue_status_history (
 
 CREATE INDEX IF NOT EXISTS idx_status_history_issue
     ON issue_status_history(issue_id, changed_at DESC);
+
+-- 6. Worker rewards and proposed penalties
+CREATE TABLE IF NOT EXISTS worker_performance_records (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    worker_id BIGINT NOT NULL REFERENCES users(id)
+        ON DELETE RESTRICT,
+    issue_id BIGINT REFERENCES issues(id)
+        ON DELETE RESTRICT,
+
+    record_type VARCHAR(10) NOT NULL
+        CHECK (record_type IN ('reward', 'penalty')),
+
+    reason TEXT NOT NULL,
+    points INTEGER NOT NULL
+        CHECK (points > 0),
+
+    evidence_url TEXT,
+
+    status VARCHAR(15) NOT NULL DEFAULT 'proposed'
+        CHECK (status IN (
+            'proposed',
+            'approved',
+            'rejected',
+            'reversed'
+        )),
+
+    created_by BIGINT NOT NULL REFERENCES users(id)
+        ON DELETE RESTRICT,
+
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_performance_worker
+    ON worker_performance_records(worker_id);
+
+CREATE INDEX IF NOT EXISTS idx_performance_status
+    ON worker_performance_records(status);
+
+CREATE INDEX IF NOT EXISTS idx_performance_issue
+    ON worker_performance_records(issue_id);
+
+
+-- 7. Reviews of worker performance records
+CREATE TABLE IF NOT EXISTS performance_reviews (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+
+    performance_record_id BIGINT NOT NULL
+        REFERENCES worker_performance_records(id)
+        ON DELETE RESTRICT,
+
+    reviewer_id BIGINT NOT NULL REFERENCES users(id)
+        ON DELETE RESTRICT,
+
+    decision VARCHAR(20) NOT NULL
+        CHECK (decision IN (
+            'approved',
+            'rejected',
+            'reversed',
+            'more_information'
+        )),
+
+    comments TEXT NOT NULL,
+    reviewed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_performance_reviews_record
+    ON performance_reviews(performance_record_id);
+
+
+-- 8. Worker appeals against performance decisions
+CREATE TABLE IF NOT EXISTS performance_appeals (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+
+    performance_record_id BIGINT NOT NULL
+        REFERENCES worker_performance_records(id)
+        ON DELETE RESTRICT,
+
+    worker_id BIGINT NOT NULL REFERENCES users(id)
+        ON DELETE RESTRICT,
+
+    appeal_reason TEXT NOT NULL,
+    evidence_url TEXT,
+
+    status VARCHAR(15) NOT NULL DEFAULT 'pending'
+        CHECK (status IN (
+            'pending',
+            'accepted',
+            'rejected'
+        )),
+
+    reviewed_by BIGINT REFERENCES users(id)
+        ON DELETE RESTRICT,
+
+    review_comments TEXT,
+    submitted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    reviewed_at TIMESTAMPTZ,
+
+    CHECK (
+        (status = 'pending' AND reviewed_by IS NULL
+            AND reviewed_at IS NULL)
+        OR
+        (status <> 'pending' AND reviewed_by IS NOT NULL
+            AND reviewed_at IS NOT NULL)
+    )
+);
+
+CREATE INDEX IF NOT EXISTS idx_performance_appeals_record
+    ON performance_appeals(performance_record_id);
+
+CREATE INDEX IF NOT EXISTS idx_performance_appeals_status
+    ON performance_appeals(status);
