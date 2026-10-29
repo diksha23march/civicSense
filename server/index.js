@@ -36,28 +36,53 @@ app.get("/api/db-health", async (req, res) => {
   }
 });
 
+
 app.get("/api/issues", async (req, res) => {
   try {
-    const result = await pool.query(`
-      SELECT
-        i.id,
-        i.title,
-        i.description,
-        i.category,
-        i.address,
-        i.latitude,
-        i.longitude,
-        i.image_url,
-        i.priority,
-        i.status,
-        i.reported_by,
-        i.created_at,
-        i.updated_at,
-        u.full_name AS reporter_name
-      FROM issues i
-      JOIN users u ON i.reported_by = u.id
-      ORDER BY i.created_at DESC, i.id DESC
-    `);
+    const { status, category } = req.query;
+
+    // Validate query parameters
+    if (
+      (status !== undefined && typeof status !== "string") ||
+      (category !== undefined && typeof category !== "string")
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Status and category must be single string values.",
+      });
+    }
+
+    const statusFilter = status?.trim() || null;
+    const categoryFilter = category?.trim() || null;
+
+    const result = await pool.query(
+      `
+        SELECT
+          i.id,
+          i.title,
+          i.description,
+          i.category,
+          i.address,
+          i.latitude,
+          i.longitude,
+          i.image_url,
+          i.priority,
+          i.status,
+          i.reported_by,
+          i.created_at,
+          i.updated_at,
+          u.full_name AS reporter_name
+        FROM issues i
+        JOIN users u ON i.reported_by = u.id
+        WHERE ($1::text IS NULL OR i.status = $1)
+          AND (
+            $2::text IS NULL
+            OR LOWER(i.category) = LOWER($2)
+          )
+        ORDER BY i.created_at DESC, i.id DESC
+      `,
+      [statusFilter, categoryFilter]
+    );
 
     return res.status(200).json({
       success: true,
