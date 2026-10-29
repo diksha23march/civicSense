@@ -21,8 +21,11 @@ const categories = [
 const statuses = [
   { value: 'submitted', label: 'Submitted' },
   { value: 'under_review', label: 'Under Review' },
+  { value: 'assigned', label: 'Assigned' },
   { value: 'in_progress', label: 'In Progress' },
   { value: 'resolved', label: 'Resolved' },
+  { value: 'rejected', label: 'Rejected' },
+  { value: 'reopened', label: 'Reopened' },
   { value: 'closed', label: 'Closed' },
 ]
 
@@ -66,6 +69,8 @@ function App() {
   const [submitting, setSubmitting] = useState(false)
   const [formError, setFormError] = useState('')
   const [notice, setNotice] = useState('')
+  const [statusUpdates, setStatusUpdates] = useState({})
+  const [updatingIssueId, setUpdatingIssueId] = useState(null)
 
   useEffect(() => {
     const controller = new AbortController()
@@ -156,10 +161,52 @@ function App() {
     } catch (error) {
       setFormError(
         error.message ||
-          'Could not submit the report. Check your backend connection.',
+        'Could not submit the report. Check your backend connection.',
       )
     } finally {
       setSubmitting(false)
+    }
+  }
+
+  async function handleStatusUpdate(issue) {
+    const newStatus = statusUpdates[issue.id] ?? issue.status
+
+    if (newStatus === issue.status) {
+      setNotice('Choose a different status before updating.')
+      return
+    }
+
+    setUpdatingIssueId(issue.id)
+    setNotice('')
+
+    try {
+      const response = await fetch(`${API_URL}/${issue.id}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          status: newStatus,
+          changedBy: DEMO_REPORTER_ID,
+          note: 'Status updated from the CivicSense dashboard',
+        }),
+      })
+
+      const data = await response.json()
+
+      if (!response.ok || !data.success) {
+        throw new Error(data.message || 'Could not update the issue status.')
+      }
+
+      setNotice(`Issue #${issue.id} status updated to ${readableLabel(newStatus)}.`)
+      setStatusUpdates((current) => {
+        const updated = { ...current }
+        delete updated[issue.id]
+        return updated
+      })
+      setRefreshKey((current) => current + 1)
+    } catch (error) {
+      setNotice(error.message || 'Could not update the issue status.')
+    } finally {
+      setUpdatingIssueId(null)
     }
   }
 
@@ -540,10 +587,10 @@ function App() {
                     {issue.category === 'roads'
                       ? '⌁'
                       : issue.category === 'sanitation' ||
-                          issue.category === 'waste_management'
+                        issue.category === 'waste_management'
                         ? '♻'
                         : issue.category === 'water_supply' ||
-                            issue.category === 'drainage'
+                          issue.category === 'drainage'
                           ? '≋'
                           : issue.category === 'street_lighting'
                             ? '☼'
@@ -572,8 +619,41 @@ function App() {
                     <span className={`priority-pill priority-${issue.priority || 'medium'}`}>
                       {readableLabel(issue.priority || 'medium')} priority
                     </span>
+
                     <small>Issue #{issue.id}</small>
                     <small>By {issue.reporter_name || 'Citizen'}</small>
+
+                    <label className="status-editor">
+                      <span>Update status</span>
+                      <select
+                        value={statusUpdates[issue.id] ?? issue.status}
+                        onChange={(event) =>
+                          setStatusUpdates((current) => ({
+                            ...current,
+                            [issue.id]: event.target.value,
+                          }))
+                        }
+                        disabled={updatingIssueId === issue.id}
+                      >
+                        {statuses.map((status) => (
+                          <option key={status.value} value={status.value}>
+                            {status.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <button
+                      className="status-update-button"
+                      type="button"
+                      onClick={() => handleStatusUpdate(issue)}
+                      disabled={
+                        updatingIssueId === issue.id ||
+                        (statusUpdates[issue.id] ?? issue.status) === issue.status
+                      }
+                    >
+                      {updatingIssueId === issue.id ? 'Updating...' : 'Update Status'}
+                    </button>
                   </div>
                 </article>
               ))}
