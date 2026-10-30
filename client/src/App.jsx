@@ -1,11 +1,9 @@
 
 import { useEffect, useState } from 'react'
 import './App.css'
+import Auth from './components/Auth'
 
 const API_URL = 'http://localhost:5000/api/issues'
-
-// Demo reporter ID: your existing database issue uses user ID 1.
-const DEMO_REPORTER_ID = 1
 
 const categories = [
   { value: 'sanitation', label: 'Sanitation' },
@@ -57,6 +55,29 @@ function formatDate(value) {
 }
 
 function App() {
+  const [token, setToken] = useState(() => localStorage.getItem('civicsense-token'))
+  const [currentUser, setCurrentUser] = useState(() => {
+    const savedUser = localStorage.getItem('civicsense-user')
+    return savedUser ? JSON.parse(savedUser) : null
+  })
+  const [authLoading, setAuthLoading] = useState(Boolean(token))
+
+  function handleLogin(authToken, user) {
+    localStorage.setItem('civicsense-token', authToken)
+    localStorage.setItem('civicsense-user', JSON.stringify(user))
+
+    setToken(authToken)
+    setCurrentUser(user)
+  }
+
+  function handleLogout() {
+    localStorage.removeItem('civicsense-token')
+    localStorage.removeItem('civicsense-user')
+
+    setToken(null)
+    setCurrentUser(null)
+  }
+
   const [issues, setIssues] = useState([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
@@ -73,6 +94,50 @@ function App() {
   const [updatingIssueId, setUpdatingIssueId] = useState(null)
 
   useEffect(() => {
+    if (!token) {
+      setAuthLoading(false)
+      return
+    }
+
+    const controller = new AbortController()
+
+    async function validateSession() {
+      try {
+        const response = await fetch('http://localhost:5000/api/auth/me', {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+          signal: controller.signal,
+        })
+
+        const data = await response.json()
+
+        if (!response.ok || !data.success) {
+          throw new Error(data.message || 'Session expired.')
+        }
+
+        setCurrentUser(data.user)
+        localStorage.setItem('civicsense-user', JSON.stringify(data.user))
+      } catch (error) {
+        if (error.name !== 'AbortError') {
+          localStorage.removeItem('civicsense-token')
+          localStorage.removeItem('civicsense-user')
+          setToken(null)
+          setCurrentUser(null)
+        }
+      } finally {
+        if (!controller.signal.aborted) {
+          setAuthLoading(false)
+        }
+      }
+    }
+
+    validateSession()
+
+    return () => controller.abort()
+  }, [token])
+
+  useEffect(() => {
     const controller = new AbortController()
 
     async function loadIssues() {
@@ -87,7 +152,12 @@ function App() {
       const url = query ? `${API_URL}?${query}` : API_URL
 
       try {
-        const response = await fetch(url, { signal: controller.signal })
+        const response = await fetch(url, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+          signal: controller.signal,
+        })
         const data = await response.json()
 
         if (!response.ok || !data.success) {
@@ -109,7 +179,7 @@ function App() {
 
     loadIssues()
     return () => controller.abort()
-  }, [statusFilter, categoryFilter, refreshKey])
+  }, [statusFilter, categoryFilter, refreshKey, token])
 
   const submittedCount = issues.filter(
     (issue) => issue.status === 'submitted',
@@ -137,11 +207,11 @@ function App() {
     try {
       const response = await fetch(API_URL, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...form,
-          reportedBy: DEMO_REPORTER_ID,
-        }),
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(form),
       })
 
       const data = await response.json()
@@ -182,10 +252,12 @@ function App() {
     try {
       const response = await fetch(`${API_URL}/${issue.id}/status`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
         body: JSON.stringify({
           status: newStatus,
-          changedBy: DEMO_REPORTER_ID,
           note: 'Status updated from the CivicSense dashboard',
         }),
       })
@@ -208,6 +280,14 @@ function App() {
     } finally {
       setUpdatingIssueId(null)
     }
+  }
+
+  if (authLoading) {
+    return <div className="loading-screen">Verifying your session...</div>
+  }
+
+  if (!token || !currentUser) {
+    return <Auth onLogin={handleLogin} />
   }
 
   return (
@@ -249,12 +329,29 @@ function App() {
             <p>Small reports can lead to meaningful change.</p>
           </div>
           <div className="profile-row">
-            <div className="avatar">DC</div>
+            <div className="avatar">
+              {currentUser.full_name
+                .split(' ')
+                .map((part) => part[0])
+                .join('')
+                .slice(0, 2)
+                .toUpperCase()}
+            </div>
+
             <div>
-              <strong>Demo Citizen</strong>
-              <small>Citizen account · ID 1</small>
+              <strong>{currentUser.full_name}</strong>
+              <small>{currentUser.role.replace('_', ' ')}</small>
             </div>
           </div>
+
+          <button
+            className="nav-link nav-button"
+            type="button"
+            onClick={handleLogout}
+          >
+            <span className="nav-icon">↪</span>
+            Log out
+          </button>
         </div>
       </aside>
 
@@ -268,7 +365,14 @@ function App() {
               <span className="status-dot" />
               Civic reporting portal
             </span>
-            <div className="top-avatar">DC</div>
+            <div className="top-avatar">
+              {currentUser.full_name
+                .split(' ')
+                .map((part) => part[0])
+                .join('')
+                .slice(0, 2)
+                .toUpperCase()}
+            </div>
           </div>
         </header>
 
@@ -623,37 +727,41 @@ function App() {
                     <small>Issue #{issue.id}</small>
                     <small>By {issue.reporter_name || 'Citizen'}</small>
 
-                    <label className="status-editor">
-                      <span>Update status</span>
-                      <select
-                        value={statusUpdates[issue.id] ?? issue.status}
-                        onChange={(event) =>
-                          setStatusUpdates((current) => ({
-                            ...current,
-                            [issue.id]: event.target.value,
-                          }))
-                        }
-                        disabled={updatingIssueId === issue.id}
-                      >
-                        {statuses.map((status) => (
-                          <option key={status.value} value={status.value}>
-                            {status.label}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
+                    {['worker', 'department_head', 'admin'].includes(currentUser.role) && (
+                      <>
+                        <label className="status-editor">
+                          <span>Update status</span>
+                          <select
+                            value={statusUpdates[issue.id] ?? issue.status}
+                            onChange={(event) =>
+                              setStatusUpdates((current) => ({
+                                ...current,
+                                [issue.id]: event.target.value,
+                              }))
+                            }
+                            disabled={updatingIssueId === issue.id}
+                          >
+                            {statuses.map((status) => (
+                              <option key={status.value} value={status.value}>
+                                {status.label}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
 
-                    <button
-                      className="status-update-button"
-                      type="button"
-                      onClick={() => handleStatusUpdate(issue)}
-                      disabled={
-                        updatingIssueId === issue.id ||
-                        (statusUpdates[issue.id] ?? issue.status) === issue.status
-                      }
-                    >
-                      {updatingIssueId === issue.id ? 'Updating...' : 'Update Status'}
-                    </button>
+                        <button
+                          className="status-update-button"
+                          type="button"
+                          onClick={() => handleStatusUpdate(issue)}
+                          disabled={
+                            updatingIssueId === issue.id ||
+                            (statusUpdates[issue.id] ?? issue.status) === issue.status
+                          }
+                        >
+                          {updatingIssueId === issue.id ? 'Updating...' : 'Update Status'}
+                        </button>
+                      </>
+                    )}
                   </div>
                 </article>
               ))}
