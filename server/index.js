@@ -1,3 +1,6 @@
+const multer = require("multer");
+const path = require("path");
+const fs = require("fs");
 
 const express = require("express");
 const cors = require("cors");
@@ -13,6 +16,50 @@ const { authenticateToken, authorizeRoles } = require("./authMiddleware");
 
 app.use(cors());
 app.use(express.json());
+
+// Create uploads directory if it does not exist
+const uploadDirectory = path.join(__dirname, "uploads");
+
+if (!fs.existsSync(uploadDirectory)) {
+  fs.mkdirSync(uploadDirectory, { recursive: true });
+}
+
+// Configure image storage
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, uploadDirectory);
+  },
+
+  filename: (req, file, cb) => {
+    const uniqueName =
+      `issue-${Date.now()}-${Math.round(Math.random() * 1e9)}` +
+      path.extname(file.originalname).toLowerCase();
+
+    cb(null, uniqueName);
+  },
+});
+
+// Accept only supported image formats
+const fileFilter = (req, file, cb) => {
+  const allowedTypes = ["image/jpeg", "image/png", "image/webp"];
+
+  if (allowedTypes.includes(file.mimetype)) {
+    cb(null, true);
+  } else {
+    cb(new Error("Only JPG, PNG, and WEBP images are allowed."));
+  }
+};
+
+const upload = multer({
+  storage,
+  fileFilter,
+  limits: {
+    fileSize: 5 * 1024 * 1024,
+  },
+});
+
+// Serve uploaded complaint images
+app.use("/uploads", express.static(uploadDirectory));
 
 // Register a new citizen
 app.post(
@@ -268,6 +315,7 @@ app.post(
   "/api/issues",
   authenticateToken,
   authorizeRoles("citizen"),
+  upload.single("image"),
   async (req, res) => {
     const {
       title,
@@ -276,9 +324,22 @@ app.post(
       address,
       latitude,
       longitude,
-      imageUrl,
       priority = "medium",
     } = req.body;
+
+    const imageUrl = req.file
+      ? `/uploads/${req.file.filename}`
+      : null;
+
+    const parsedLatitude =
+      latitude == null || String(latitude).trim() === ''
+        ? null
+        : Number(latitude)
+
+    const parsedLongitude =
+      longitude == null || String(longitude).trim() === ''
+        ? null
+        : Number(longitude)
 
     const allowedCategories = [
       "sanitation",
@@ -325,13 +386,24 @@ app.post(
     }
 
     // Validate optional coordinates
-    const validCoordinate = (value, min, max) =>
-      value === undefined ||
-      value === null ||
-      (value !== "" &&
-        Number.isFinite(Number(value)) &&
-        Number(value) >= min &&
-        Number(value) <= max);
+    const validCoordinate = (value, min, max) => {
+      // Location is optional.
+      if (
+        value === undefined ||
+        value === null ||
+        String(value).trim() === ""
+      ) {
+        return true
+      }
+
+      const coordinate = Number(value)
+
+      return (
+        Number.isFinite(coordinate) &&
+        coordinate >= min &&
+        coordinate <= max
+      )
+    }
 
     if (
       !validCoordinate(latitude, -90, 90) ||
@@ -355,9 +427,9 @@ app.post(
           description.trim(),
           category,
           address.trim(),
-          latitude ?? null,
-          longitude ?? null,
-          imageUrl ?? null,
+          parsedLatitude,
+          parsedLongitude,
+          imageUrl,
           priority,
           req.user.id,
         ]
@@ -572,6 +644,37 @@ app.get(
       });
     }
   });
+
+app.use((error, req, res, next) => {
+  if (error instanceof multer.MulterError) {
+    const message =
+      error.code === "LIMIT_FILE_SIZE"
+        ? "Image must be 5 MB or smaller."
+        : "Image upload failed.";
+
+    return res.status(400).json({
+      success: false,
+      message,
+    });
+  }
+
+  if (
+    error.message ===
+    "Only JPG, PNG, and WEBP images are allowed."
+  ) {
+    return res.status(400).json({
+      success: false,
+      message: error.message,
+    });
+  }
+
+  console.error("Unexpected server error:", error);
+
+  return res.status(500).json({
+    success: false,
+    message: "Something went wrong.",
+  });
+});
 
 app.listen(PORT, () => {
   console.log(`CivicSense server running at http://localhost:${PORT}`);

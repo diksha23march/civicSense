@@ -1,4 +1,3 @@
-
 import { useEffect, useState } from 'react'
 import './App.css'
 import Auth from './components/Auth'
@@ -32,6 +31,8 @@ const emptyForm = {
   description: '',
   category: 'roads',
   address: '',
+  latitude: '',
+  longitude: '',
   priority: 'medium',
 }
 
@@ -43,10 +44,8 @@ function readableLabel(value = '') {
 
 function formatDate(value) {
   if (!value) return 'Date unavailable'
-
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return 'Date unavailable'
-
   return date.toLocaleDateString('en-IN', {
     day: 'numeric',
     month: 'short',
@@ -89,9 +88,22 @@ function App() {
   const [showForm, setShowForm] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [formError, setFormError] = useState('')
+  // Complaint image
+  const [selectedImage, setSelectedImage] = useState(null)
+  const [imagePreview, setImagePreview] = useState('')
+  // Browser location
+  const [locationLoading, setLocationLoading] = useState(false)
+  const [locationError, setLocationError] = useState('')
   const [notice, setNotice] = useState('')
   const [statusUpdates, setStatusUpdates] = useState({})
   const [updatingIssueId, setUpdatingIssueId] = useState(null)
+  // Release the preview URL when the image changes or the component unmounts.
+  useEffect(() => {
+    if (!imagePreview) return
+    return () => {
+      URL.revokeObjectURL(imagePreview)
+    }
+  }, [imagePreview])
 
   useEffect(() => {
     if (!token) {
@@ -198,6 +210,39 @@ function App() {
     setForm((current) => ({ ...current, [name]: value }))
   }
 
+  function handleImageChange(event) {
+    const file = event.target.files?.[0]
+
+    if (!file) return
+
+    const allowedTypes = ['image/jpeg', 'image/png', 'image/webp']
+
+    if (!allowedTypes.includes(file.type)) {
+      setFormError('Please select a JPG, PNG, or WEBP image.')
+      event.target.value = ''
+      return
+    }
+
+    if (file.size > 5 * 1024 * 1024) {
+      setFormError('Image size must be 5 MB or smaller.')
+      event.target.value = ''
+      return
+    }
+
+    setFormError('')
+    setSelectedImage(file)
+    setImagePreview(URL.createObjectURL(file))
+
+    // Allow the same file to be selected again if needed.
+    event.target.value = ''
+  }
+
+  function removeSelectedImage() {
+    setSelectedImage(null)
+    setImagePreview('')
+    setFormError('')
+  }
+
   async function handleSubmit(event) {
     event.preventDefault()
     setFormError('')
@@ -205,13 +250,28 @@ function App() {
     setSubmitting(true)
 
     try {
+      const formData = new FormData()
+
+      // Add all complaint fields.
+      Object.entries(form).forEach(([key, value]) => {
+        if (key === 'latitude' || key === 'longitude') {
+          formData.append(key, value || '')
+        } else {
+          formData.append(key, value)
+        }
+      })
+
+      // Add the selected image, if one exists.
+      if (selectedImage) {
+        formData.append('image', selectedImage)
+      }
+
       const response = await fetch(API_URL, {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify(form),
+        body: formData,
       })
 
       const data = await response.json()
@@ -553,6 +613,35 @@ function App() {
                 />
               </label>
 
+
+              <label className="form-full">
+                Upload an image (optional)
+                <input
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  onChange={handleImageChange}
+                />
+                <small>JPG, PNG or WEBP. Maximum size: 5 MB.</small>
+              </label>
+
+              {imagePreview && (
+                <div className="form-full image-preview">
+                  <p>Image preview</p>
+                  <img
+                    src={imagePreview}
+                    alt="Selected complaint"
+                  />
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={removeSelectedImage}
+                  >
+                    Remove image
+                  </button>
+                </div>
+              )}
+
+
               {formError && (
                 <div className="form-error form-full" role="alert">
                   {formError}
@@ -582,9 +671,6 @@ function App() {
                 </div>
               </div>
             </form>
-            <p className="demo-note">
-              Demo mode: reports are submitted under the existing citizen ID 1.
-            </p>
           </section>
         )}
 

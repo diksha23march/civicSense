@@ -31,3 +31,4 @@ dist-ssr
 
 # Backend dependencies
 server/node_modules/
+server/uploads/
